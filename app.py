@@ -8,8 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-import json
-import zipfile
+import shutil
 import joblib
 import traceback
 from datetime import datetime
@@ -45,17 +44,12 @@ LIGHT = "#F5F7FA"
 def load_model():
     import tensorflow as tf
     from tensorflow import keras
-    # The zip file contains config.json and weights
-    # We copy it and load using keras load_model
-    with zipfile.ZipFile(MODEL_ZIP, "r") as z:
-        cfg = json.loads(z.read("config.json"))
-        model = keras.Sequential.from_config(cfg["config"])
-        tmp = os.path.join(BASE_DIR, "_temp_w.h5")
-        with open(tmp, "wb") as f:
-            f.write(z.read("model.weights.h5"))
-        model.load_weights(tmp)
-        os.remove(tmp)
-        model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    # The zip file is actually a .keras model file (same internal structure)
+    # We copy it to .keras format and load directly
+    model_path = os.path.join(BASE_DIR, "placement_ann_model.keras")
+    if not os.path.exists(model_path):
+        shutil.copy2(MODEL_ZIP, model_path)
+    model = keras.models.load_model(model_path)
     return model
 
 @st.cache_resource
@@ -147,8 +141,8 @@ def generate_pdf(data, result, confidence, suggestions):
 
 
 # ===== SIDEBAR NAVIGATION =====
-st.sidebar.markdown(f"<h2 style='color:{NAVY}; text-align:center;'>🎓<br>Placement<br>Predictor</h2>"
-                    f"<p style='text-align:center; color:#888; font-size:0.75rem;'>ANN | ML | Streamlit</p>",
+st.sidebar.markdown(f"<h2 style='color:{NAVY}; text-align:center; font-weight:700;'>🎓<br>Placement<br>Predictor</h2>"
+                    f"<p style='text-align:center; color:#555; font-size:0.8rem; font-weight:500;'>ANN | ML | Streamlit</p>",
                     unsafe_allow_html=True)
 st.sidebar.markdown("---")
 page = st.sidebar.radio("Navigate", ["Home", "Predict Placement"], label_visibility="collapsed")
@@ -186,8 +180,8 @@ if page == "Home":
         for i, t in enumerate(["Python", "Streamlit", "TensorFlow/Keras",
                                 "Scikit-learn", "Pandas/NumPy", "Matplotlib"]):
             tech_cols[i % 3].markdown(
-                f"<div style='background:{LIGHT}; padding:0.2rem 0.4rem; "
-                f"border-radius:5px; text-align:center; font-size:0.8rem;'>{t}</div>",
+                f"<div style='background:{NAVY}; color:white; padding:0.3rem 0.5rem; "
+                f"border-radius:6px; text-align:center; font-size:0.8rem; font-weight:500;'>{t}</div>",
                 unsafe_allow_html=True)
 
         st.markdown("### How it Works")
@@ -210,15 +204,15 @@ if page == "Home":
 
         st.markdown("### Dataset Overview")
         st.markdown(
-            f"<div style='background:{LIGHT}; padding:1rem; border-radius:10px;'>"
-            f"<p style='margin:0; color:#666;'>Total Records</p>"
-            f"<p style='margin:0; font-size:1.6rem; font-weight:bold; color:{NAVY};'>{total:,}</p>"
-            f"<hr style='margin:0.5rem 0;'>"
+            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px;'>"
+            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Total Records</p>"
+            f"<p style='margin:0; font-size:1.6rem; font-weight:bold; color:white;'>{total:,}</p>"
+            f"<hr style='margin:0.5rem 0; border-color:rgba(255,255,255,0.2);'>"
             f"<div style='display:flex; justify-content:space-between;'>"
-            f"<div><p style='margin:0; color:#666;'>Placed</p>"
+            f"<div><p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Placed</p>"
             f"<p style='margin:0; font-size:1.2rem; font-weight:bold; color:{GREEN};'>"
             f"{placed:,} ({placed/total*100:.1f}%)</p></div>"
-            f"<div><p style='margin:0; color:#666;'>Not Placed</p>"
+            f"<div><p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Not Placed</p>"
             f"<p style='margin:0; font-size:1.2rem; font-weight:bold; color:{RED};'>"
             f"{nplaced:,} ({nplaced/total*100:.1f}%)</p></div></div></div>",
             unsafe_allow_html=True
@@ -226,20 +220,20 @@ if page == "Home":
 
         st.markdown("### Model Performance")
         st.markdown(
-            f"<div style='background:{LIGHT}; padding:1rem; border-radius:10px; text-align:center;'>"
-            f"<p style='margin:0; color:#666;'>Test Accuracy</p>"
+            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px; text-align:center;'>"
+            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Test Accuracy</p>"
             f"<p style='margin:0; font-size:1.8rem; font-weight:bold; color:{GREEN};'>93.67%</p>"
-            f"<p style='margin:0; color:#666; font-size:0.85rem;'>"
+            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>"
             f"Precision: 91.8% | Recall: 92.7% | F1: 92.3%</p></div>",
             unsafe_allow_html=True
         )
 
         st.markdown("### Model Architecture")
         st.markdown(
-            f"<div style='background:{LIGHT}; padding:1rem; border-radius:10px; font-size:0.85rem;'>"
+            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px; font-size:0.85rem; color:white;'>"
             f"Input (11) → Dense(64,ReLU) → Dropout(30%) → "
             f"Dense(32,ReLU) → Dropout(30%) → Output(1,Sigmoid)<br>"
-            f"<span style='color:#888;'>Parameters: 2,881 | Optimizer: Adam | Epochs: 57</span></div>",
+            f"<span style='color:rgba(255,255,255,0.6);'>Parameters: 2,881 | Optimizer: Adam | Epochs: 57</span></div>",
             unsafe_allow_html=True
         )
 
