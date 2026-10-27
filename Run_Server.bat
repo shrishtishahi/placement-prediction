@@ -46,7 +46,9 @@ echo Close this window when you are finished.
 echo.
 
 set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-".venv\Scripts\python.exe" -m streamlit run "%~dp0app.py" --browser.gatherUsageStats=false
+set STREAMLIT_SERVER_HEADLESS=true
+start "" http://localhost:8501
+".venv\Scripts\python.exe" -m streamlit run "%~dp0app.py" --browser.gatherUsageStats=false --server.headless=true --server.port=8501
 echo.
 echo The app has stopped.
 pause

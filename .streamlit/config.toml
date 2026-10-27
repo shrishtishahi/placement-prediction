@@ -2,9 +2,7 @@
 gatherUsageStats = false
 
 [server]
-port = 8501
-address = "localhost"
-headless = false
+headless = true
 
 [theme]
 base = "light"

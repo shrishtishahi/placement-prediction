@@ -33,4 +33,6 @@ echo "Opening the app in your browser."
 echo "Keep this window open while you present."
 echo
 export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-exec .venv/bin/python -m streamlit run app.py --browser.gatherUsageStats=false
+export STREAMLIT_SERVER_HEADLESS=true
+(sleep 2 && (xdg-open http://localhost:8501 >/dev/null 2>&1 || open http://localhost:8501 >/dev/null 2>&1 || true)) &
+exec .venv/bin/python -m streamlit run app.py --browser.gatherUsageStats=false --server.headless=true --server.port=8501
