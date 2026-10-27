@@ -1,410 +1,497 @@
-# Student Placement Prediction System
-# Using ANN (Artificial Neural Network) with Streamlit
-# Technologies: Python, TensorFlow, Scikit-learn, Streamlit
+import matplotlib
 
-import streamlit as st
-import pandas as pd
-import numpy as np
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-import shutil
-import joblib
-import traceback
-from datetime import datetime
-from io import BytesIO
+import pandas as pd
+import streamlit as st
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.colors import HexColor
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from predictor import (
+    ROOT,
+    STRONG_PROFILE,
+    TYPICAL_PROFILE,
+    WEAK_PROFILE,
+    build_suggestions,
+    predict_record,
+    verify_network,
 )
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from report_pdf import build_report
 
-st.set_page_config(page_title="Placement Predictor", page_icon="🎓", layout="wide")
+st.set_page_config(
+    page_title="Student Placement Prediction",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(BASE_DIR, "Placement_Prediction_data.csv")
-MODEL_ZIP = os.path.join(BASE_DIR, "placement_ann_model.zip")
-SCALER_PATH = os.path.join(BASE_DIR, "scaler.pkl")
-ENCODER_PATH = os.path.join(BASE_DIR, "label_encoder.pkl")
+NAVY = "#1F4E79"
+TEAL = "#1A6B7A"
+GREEN = "#1E7F4F"
+RED = "#C0392B"
+GOLD = "#B8860B"
+SLATE = "#5D6D7E"
 
-# Colour scheme
-GREEN = "#1DB954"
-RED = "#E74C3C"
-NAVY = "#1E3A5F"
-BLUE = "#4A90D9"
-GOLD = "#F5A623"
-LIGHT = "#F5F7FA"
+DATA_PATH = ROOT / "Placement_Prediction_data.csv"
 
-# Loading the trained ANN model
-@st.cache_resource
-def load_model():
-    import tensorflow as tf
-    from tensorflow import keras
-    # The zip file is actually a .keras model file (same internal structure)
-    # We copy it to .keras format and load directly
-    model_path = os.path.join(BASE_DIR, "placement_ann_model.keras")
-    if not os.path.exists(model_path):
-        shutil.copy2(MODEL_ZIP, model_path)
-    model = keras.models.load_model(model_path)
-    return model
+st.markdown(
+    f"""
+    <style>
+    .block-container {{
+        padding-top: 1.4rem;
+        padding-bottom: 2.5rem;
+        max-width: 1180px;
+    }}
+    .hero {{
+        background: linear-gradient(135deg, {NAVY} 0%, {TEAL} 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 1.6rem 1.8rem 1.4rem 1.8rem;
+        margin-bottom: 1.1rem;
+    }}
+    .hero h1 {{
+        color: white;
+        font-size: 2rem;
+        margin: 0 0 0.35rem 0;
+        font-weight: 700;
+    }}
+    .hero p {{
+        color: rgba(255,255,255,0.92);
+        font-size: 1.05rem;
+        margin: 0;
+        line-height: 1.45;
+    }}
+    .result-banner {{
+        border-radius: 14px;
+        padding: 1.3rem 1.2rem;
+        text-align: center;
+        margin-bottom: 0.8rem;
+    }}
+    .result-banner h2 {{
+        color: white;
+        margin: 0;
+        font-size: 2rem;
+    }}
+    .result-banner p {{
+        color: rgba(255,255,255,0.95);
+        margin: 0.35rem 0 0 0;
+        font-size: 1.05rem;
+    }}
+    .tech-pill {{
+        background: {NAVY};
+        color: white;
+        border-radius: 999px;
+        padding: 0.35rem 0.7rem;
+        text-align: center;
+        font-size: 0.86rem;
+        font-weight: 600;
+        margin-bottom: 0.4rem;
+    }}
+    div[data-testid="stSidebar"] {{
+        background: #F8FBFD;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-@st.cache_resource
-def load_scaler():
-    return joblib.load(SCALER_PATH)
 
-@st.cache_resource
-def load_encoder():
-    return joblib.load(ENCODER_PATH)
+def init_state():
+    if "nav" not in st.session_state:
+        st.session_state.nav = "Home"
+    if "student_name" not in st.session_state:
+        st.session_state.student_name = ""
+    if "prediction" not in st.session_state:
+        st.session_state.prediction = None
+    for key, value in TYPICAL_PROFILE.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def go_to(page):
+    st.session_state.nav = page
+
+
+def make_prediction(profile):
+    result = predict_record(profile)
+    return {
+        **result,
+        "suggestions": build_suggestions(result["status"], profile),
+        "profile": dict(profile),
+    }
+
+
+def load_example(kind):
+    source = STRONG_PROFILE if kind == "strong" else WEAK_PROFILE
+    for key, value in source.items():
+        st.session_state[key] = value
+    profile = dict(source)
+    profile["student_name"] = st.session_state.get("student_name", "")
+    st.session_state.prediction = make_prediction(profile)
+    st.session_state.nav = "Prediction"
+
 
 @st.cache_data
-def load_data():
-    return pd.read_csv(DATA_PATH)
+def load_dataset_summary():
+    frame = pd.read_csv(DATA_PATH)
+    total = int(len(frame))
+    placed = int((frame["PlacementStatus"] == "Placed").sum())
+    not_placed = total - placed
+    return {"total": total, "placed": placed, "not_placed": not_placed}
 
-# Preprocessing - scaling and encoding input
-def preprocess_input(fd):
-    cols = [
-        "CGPA", "Major Projects", "Workshops/Certificatios",
-        "Mini Projects", "Skills", "Communication Skill Rating",
-        "Internship", "Hackathon", "12th Percentage",
-        "10th Percentage", "backlogs"
+
+def probability_chart(prob_placed, prob_not_placed):
+    fig, axis = plt.subplots(figsize=(6.4, 2.6))
+    labels = ["Not Placed", "Placed"]
+    values = [prob_not_placed * 100, prob_placed * 100]
+    colors = [RED, GREEN]
+    bars = axis.barh(labels, values, color=colors, height=0.55)
+    for bar, value in zip(bars, values):
+        inside = value >= 18
+        axis.text(
+            value - 2 if inside else value + 1.5,
+            bar.get_y() + bar.get_height() / 2,
+            f"{value:.1f}%",
+            va="center",
+            ha="right" if inside else "left",
+            fontsize=11,
+            fontweight="bold",
+            color="white" if inside else "#1C2833",
+        )
+    axis.set_xlim(0, 100)
+    axis.set_xlabel("Probability")
+    axis.grid(axis="x", alpha=0.25)
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def profile_chart(profile):
+    labels = ["CGPA", "Skills", "Communication", "Projects", "Backlogs"]
+    values = [
+        float(profile["cgpa"]),
+        float(profile["skills"]),
+        float(profile["communication"]),
+        float(profile["major"]) + float(profile["mini"]),
+        float(profile["backlogs"]),
     ]
-    df = pd.DataFrame([fd])[cols]
-    df["Internship"] = df["Internship"].map({"No": 0, "Yes": 1})
-    df["Hackathon"] = df["Hackathon"].map({"No": 0, "Yes": 1})
-    scaler = load_scaler()
-    return scaler.transform(df)
-
-# PDF report generation using ReportLab
-def generate_pdf(data, result, confidence, suggestions):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                            topMargin=18*mm, bottomMargin=18*mm,
-                            leftMargin=18*mm, rightMargin=18*mm)
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle("T", parent=styles["Title"], fontSize=18,
-                                  textColor=HexColor(NAVY), spaceAfter=4, alignment=TA_CENTER)
-    sub_style = ParagraphStyle("S", parent=styles["Normal"], fontSize=9,
-                                textColor=HexColor("#888888"), spaceAfter=12, alignment=TA_CENTER)
-    head_style = ParagraphStyle("H", parent=styles["Heading2"], fontSize=12,
-                                 textColor=HexColor(NAVY), spaceBefore=10, spaceAfter=4)
-    normal_style = ParagraphStyle("N", parent=styles["Normal"], fontSize=9, leading=13)
-
-    result_color = GREEN if result == "Placed" else RED
-    result_style = ParagraphStyle("R", parent=styles["Normal"], fontSize=16,
-                                   textColor=HexColor(result_color), spaceAfter=2, alignment=TA_CENTER)
-
-    elements = []
-    elements.append(Paragraph("Placement Prediction Report", title_style))
-    elements.append(Paragraph(f"Date: {datetime.now():%Y-%m-%d %H:%M}", sub_style))
-    elements.append(HRFlowable(width="100%", color=HexColor(BLUE), thickness=1))
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph(f"Prediction: {result}", result_style))
-    elements.append(Paragraph(f"Confidence Score: {confidence:.1f}%", sub_style))
-    elements.append(Spacer(1, 10))
-
-    elements.append(Paragraph("Student Details", head_style))
-    table_data = [["Feature", "Value"]]
-    for k, v in data.items():
-        table_data.append([k, str(v)])
-    table = Table(table_data, colWidths=[140, 90])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), HexColor(NAVY)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), HexColor("#FFFFFF")),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, HexColor("#CCCCCC")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [HexColor("#FFFFFF"), HexColor("#F5F7FA")]),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(table)
-    elements.append(Spacer(1, 10))
-
-    elements.append(Paragraph("Suggestions", head_style))
-    for s in suggestions:
-        elements.append(Paragraph(f"- {s}", normal_style))
-        elements.append(Spacer(1, 2))
-
-    elements.append(Spacer(1, 16))
-    elements.append(HRFlowable(width="100%", color=HexColor("#CCCCCC"), thickness=0.5))
-    elements.append(Paragraph("Generated by Placement Prediction System",
-                               ParagraphStyle("F", parent=normal_style, fontSize=7,
-                                              textColor=HexColor("#AAAAAA"), alignment=TA_CENTER)))
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
+    label_text = [
+        f"{values[0]:.1f}",
+        f"{values[1]:.0f}",
+        f"{values[2]:.1f}",
+        f"{values[3]:.0f}",
+        f"{values[4]:.0f}",
+    ]
+    colors = [NAVY, TEAL, GOLD, GREEN, RED]
+    fig, axis = plt.subplots(figsize=(6.4, 3.1))
+    bars = axis.bar(labels, values, color=colors, width=0.62)
+    for bar, label in zip(bars, label_text):
+        axis.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.12,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+    axis.set_ylabel("Value")
+    axis.set_ylim(0, max(values) + 1.8)
+    axis.grid(axis="y", alpha=0.25)
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
 
 
-# ===== SIDEBAR NAVIGATION =====
-st.sidebar.markdown(f"<h2 style='color:{NAVY}; text-align:center; font-weight:700;'>🎓<br>Placement<br>Predictor</h2>"
-                    f"<p style='text-align:center; color:#555; font-size:0.8rem; font-weight:500;'>ANN | ML | Streamlit</p>",
-                    unsafe_allow_html=True)
-st.sidebar.markdown("---")
-page = st.sidebar.radio("Navigate", ["Home", "Predict Placement"], label_visibility="collapsed")
-
-
-# ===== HOME PAGE =====
-if page == "Home":
+def render_home():
     st.markdown(
-        f"<div style='background:linear-gradient(135deg,{NAVY},{BLUE});"
-        f"padding:2rem; border-radius:12px; margin-bottom:1.5rem;'>"
-        f"<h1 style='color:white; margin:0; font-size:1.8rem;'>Student Placement Prediction</h1>"
-        f"<p style='color:rgba(255,255,255,0.85); margin-top:0.5rem;'>"
-        f"Predicting placement using Artificial Neural Network (ANN)</p></div>",
-        unsafe_allow_html=True
+        """
+        <div class="hero">
+            <h1>Student Placement Prediction</h1>
+            <p>Estimate campus placement from academics, projects, skills, internships, and backlogs.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns([1.4, 1])
-    with col1:
-        st.markdown("### About the Project")
-        st.markdown(
-            "This project predicts whether a student will be placed in campus "
-            "recruitment based on their academic performance, technical skills, "
-            "projects, internships and other factors. The model is trained on "
-            "10,000 student records and achieves 93.7% accuracy."
+    summary = load_dataset_summary()
+    left, right = st.columns([1.45, 1], gap="large")
+
+    with left:
+        st.subheader("About this system")
+        st.write(
+            "The system reads a student's academic and activity details and estimates "
+            "whether they are likely to be placed. It uses an artificial neural network "
+            "trained on 10,000 student records."
         )
-        st.markdown("### Features")
-        for item in ["Predict placement with 93% accuracy",
-                      "Personalised suggestions",
-                      "Charts for analysis",
-                      "Download PDF report"]:
+
+        st.subheader("Features of the system")
+        for item in [
+            "Two pages: an overview and a prediction form",
+            "Placement status with a confidence score",
+            "Charts for placement probability and the student profile",
+            "Suggestions based on the result",
+            "A one-page PDF report you can download",
+        ]:
             st.markdown(f"- {item}")
 
-        st.markdown("### Technologies")
-        tech_cols = st.columns(3)
-        for i, t in enumerate(["Python", "Streamlit", "TensorFlow/Keras",
-                                "Scikit-learn", "Pandas/NumPy", "Matplotlib"]):
-            tech_cols[i % 3].markdown(
-                f"<div style='background:{NAVY}; color:white; padding:0.3rem 0.5rem; "
-                f"border-radius:6px; text-align:center; font-size:0.8rem; font-weight:500;'>{t}</div>",
-                unsafe_allow_html=True)
-
-        st.markdown("### How it Works")
-        steps = [
-            "Student details are entered through a form",
-            "Data is scaled and encoded automatically",
-            "ANN model processes the input through 3 layers",
-            "Result is displayed with confidence score",
-            "Suggestions and PDF report are generated"
+        st.subheader("Technologies used")
+        technologies = [
+            "Python",
+            "Streamlit",
+            "TensorFlow / Keras",
+            "Scikit-learn",
+            "Pandas",
+            "NumPy",
         ]
-        for i, s in enumerate(steps, 1):
-            st.markdown(f"**{i}.** {s}")
+        pills = st.columns(3)
+        for index, name in enumerate(technologies):
+            pills[index % 3].markdown(
+                f"<div class='tech-pill'>{name}</div>",
+                unsafe_allow_html=True,
+            )
 
-    with col2:
-        # Dataset overview
-        df = load_data()
-        total = len(df)
-        placed = int((df["PlacementStatus"] == "Placed").sum())
-        nplaced = total - placed
+        st.subheader("How the prediction works")
+        steps = [
+            "You enter the student details on the prediction page.",
+            "Yes or No answers are converted to 1 or 0, and every value is scaled the same way as in training.",
+            "The trained network passes the 11 values through two hidden layers and a sigmoid output.",
+            "The output is the probability of being placed. Above 50% is Placed. Otherwise it is Not Placed.",
+            "The page then shows the confidence, two charts, suggestions, and a PDF report.",
+        ]
+        for number, step in enumerate(steps, start=1):
+            st.markdown(f"**{number}.** {step}")
 
-        st.markdown("### Dataset Overview")
-        st.markdown(
-            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px;'>"
-            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Total Records</p>"
-            f"<p style='margin:0; font-size:1.6rem; font-weight:bold; color:white;'>{total:,}</p>"
-            f"<hr style='margin:0.5rem 0; border-color:rgba(255,255,255,0.2);'>"
-            f"<div style='display:flex; justify-content:space-between;'>"
-            f"<div><p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Placed</p>"
-            f"<p style='margin:0; font-size:1.2rem; font-weight:bold; color:{GREEN};'>"
-            f"{placed:,} ({placed/total*100:.1f}%)</p></div>"
-            f"<div><p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Not Placed</p>"
-            f"<p style='margin:0; font-size:1.2rem; font-weight:bold; color:{RED};'>"
-            f"{nplaced:,} ({nplaced/total*100:.1f}%)</p></div></div></div>",
-            unsafe_allow_html=True
+        st.button(
+            "Open prediction page",
+            type="primary",
+            on_click=go_to,
+            args=("Prediction",),
+            use_container_width=True,
         )
 
-        st.markdown("### Model Performance")
+    with right:
+        st.subheader("Dataset")
+        total = summary["total"]
+        placed = summary["placed"]
+        not_placed = summary["not_placed"]
         st.markdown(
-            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px; text-align:center;'>"
-            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>Test Accuracy</p>"
-            f"<p style='margin:0; font-size:1.8rem; font-weight:bold; color:{GREEN};'>93.67%</p>"
-            f"<p style='margin:0; color:rgba(255,255,255,0.7); font-size:0.85rem;'>"
-            f"Precision: 91.8% | Recall: 92.7% | F1: 92.3%</p></div>",
-            unsafe_allow_html=True
+            f"""
+            <div style="background:{NAVY}; color:white; border-radius:14px; padding:1rem 1.1rem;">
+                <p style="margin:0; opacity:0.75; font-size:0.85rem;">Student records</p>
+                <p style="margin:0; font-size:1.8rem; font-weight:700;">{total:,}</p>
+                <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); margin:0.7rem 0;">
+                <p style="margin:0; color:{GREEN}; font-weight:700;">Placed: {placed:,} ({placed / total:.1%})</p>
+                <p style="margin:0.25rem 0 0 0; color:#F5B7B1; font-weight:700;">Not placed: {not_placed:,} ({not_placed / total:.1%})</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        st.subheader("Model")
+        st.markdown(
+            f"""
+            <div style="background:white; border:1px solid #E1E8EF; border-radius:14px; padding:1rem 1.1rem;">
+                <p style="margin:0; color:{SLATE}; font-size:0.85rem;">Test accuracy from training</p>
+                <p style="margin:0; color:{GREEN}; font-size:1.8rem; font-weight:700;">93.67%</p>
+                <p style="margin:0.35rem 0 0 0; color:{SLATE};">Precision 91.8% · Recall 92.7% · F1 92.3%</p>
+                <p style="margin:0.8rem 0 0 0; color:#1C2833; line-height:1.45;">
+                    Input (11) → Dense 64, ReLU → Dropout 30% → Dense 32, ReLU → Dropout 30% → Output, Sigmoid
+                </p>
+                <p style="margin:0.45rem 0 0 0; color:{SLATE};">Optimizer: Adam · Loss: binary crossentropy</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        st.markdown("### Model Architecture")
-        st.markdown(
-            f"<div style='background:{NAVY}; padding:1rem; border-radius:10px; font-size:0.85rem; color:white;'>"
-            f"Input (11) → Dense(64,ReLU) → Dropout(30%) → "
-            f"Dense(32,ReLU) → Dropout(30%) → Output(1,Sigmoid)<br>"
-            f"<span style='color:rgba(255,255,255,0.6);'>Parameters: 2,881 | Optimizer: Adam | Epochs: 57</span></div>",
-            unsafe_allow_html=True
-        )
 
+def render_prediction():
+    st.markdown(
+        """
+        <div class="hero">
+            <h1>Predict placement</h1>
+            <p>Enter the student details, or load an example, then predict.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-# ===== PREDICT PAGE =====
-elif page == "Predict Placement":
-    st.markdown(f"<h1 style='color:{NAVY};'>Predict Placement</h1>", unsafe_allow_html=True)
+    st.write("Examples for the presentation")
+    example_cols = st.columns(2)
+    example_cols[0].button(
+        "Likely placed example",
+        use_container_width=True,
+        on_click=load_example,
+        args=("strong",),
+    )
+    example_cols[1].button(
+        "Needs improvement example",
+        use_container_width=True,
+        on_click=load_example,
+        args=("weak",),
+    )
 
     with st.form("prediction_form"):
-        st.markdown("### Enter Student Details")
+        st.subheader("Student details")
+        st.text_input("Student name (optional)", key="student_name", placeholder="Name for the PDF report")
 
-        r1 = st.columns(3)
-        with r1[0]:
-            cgpa = st.number_input("CGPA", 6.5, 9.1, 7.5, 0.1)
-        with r1[1]:
-            skills = st.slider("Skills", 6, 9, 7)
-        with r1[2]:
-            comm = st.slider("Communication Rating", 3.0, 4.8, 4.0, 0.1)
+        row1 = st.columns(3)
+        row1[0].number_input("CGPA", min_value=6.5, max_value=9.1, step=0.1, key="cgpa")
+        row1[1].number_input("10th percentage", min_value=57, max_value=88, step=1, key="tenth")
+        row1[2].number_input("12th percentage", min_value=55, max_value=90, step=1, key="twelfth")
 
-        r2 = st.columns(3)
-        with r2[0]:
-            p12 = st.number_input("12th %", 55, 90, 70)
-        with r2[1]:
-            p10 = st.number_input("10th %", 57, 88, 75)
-        with r2[2]:
-            backlogs = st.number_input("Backlogs", 0, 7, 1)
+        row2 = st.columns(3)
+        row2[0].selectbox("Major projects", [0, 1, 2], key="major")
+        row2[1].selectbox("Mini projects", [0, 1, 2, 3], key="mini")
+        row2[2].selectbox("Workshops / certifications", [0, 1, 2, 3], key="workshops")
 
-        r3 = st.columns(3)
-        with r3[0]:
-            maj = st.selectbox("Major Projects", [0, 1, 2])
-        with r3[1]:
-            mini = st.selectbox("Mini Projects", [0, 1, 2, 3])
-        with r3[2]:
-            ws = st.selectbox("Workshops/Certifications", [0, 1, 2, 3])
+        row3 = st.columns(3)
+        row3[0].slider("Skills", min_value=6, max_value=9, step=1, key="skills")
+        row3[1].slider(
+            "Communication skill rating",
+            min_value=3.0,
+            max_value=4.8,
+            step=0.1,
+            key="communication",
+        )
+        row3[2].number_input("Backlogs", min_value=0, max_value=7, step=1, key="backlogs")
 
-        r4 = st.columns(3)
-        with r4[0]:
-            intern = st.radio("Internship", ["No", "Yes"], horizontal=True)
-        with r4[1]:
-            hack = st.radio("Hackathon", ["No", "Yes"], horizontal=True)
-        with r4[2]:
-            st.markdown("<br>", unsafe_allow_html=True)
+        row4 = st.columns(2)
+        row4[0].radio("Internship", ["Yes", "No"], horizontal=True, key="internship")
+        row4[1].radio("Hackathon", ["Yes", "No"], horizontal=True, key="hackathon")
 
-        submitted = st.form_submit_button("Predict Placement", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(
+            "Predict Placement",
+            type="primary",
+            use_container_width=True,
+        )
 
     if submitted:
-        with st.spinner("Model is predicting..."):
-            try:
-                # Collect all inputs
-                features = {
-                    "CGPA": cgpa,
-                    "Major Projects": maj,
-                    "Workshops/Certificatios": ws,
-                    "Mini Projects": mini,
-                    "Skills": skills,
-                    "Communication Skill Rating": comm,
-                    "Internship": intern,
-                    "Hackathon": hack,
-                    "12th Percentage": p12,
-                    "10th Percentage": p10,
-                    "backlogs": backlogs
-                }
+        profile = {
+            "student_name": st.session_state.student_name,
+            "cgpa": st.session_state.cgpa,
+            "major": st.session_state.major,
+            "workshops": st.session_state.workshops,
+            "mini": st.session_state.mini,
+            "skills": st.session_state.skills,
+            "communication": st.session_state.communication,
+            "internship": st.session_state.internship,
+            "hackathon": st.session_state.hackathon,
+            "twelfth": st.session_state.twelfth,
+            "tenth": st.session_state.tenth,
+            "backlogs": st.session_state.backlogs,
+        }
+        st.session_state.prediction = make_prediction(profile)
 
-                # Preprocess and predict
-                scaled = preprocess_input(features)
-                model = load_model()
-                prob = float(model.predict(scaled, verbose=0)[0][0])
+    prediction = st.session_state.prediction
+    if prediction is None:
+        st.info("Fill in the form and click Predict Placement. The two example buttons fill a real student and predict immediately.")
+        return
 
-                pred = 1 if prob > 0.5 else 0
-                encoder = load_encoder()
-                result = encoder.inverse_transform([pred])[0]
-                confidence = prob * 100 if result == "Placed" else (1 - prob) * 100
+    profile = prediction["profile"]
+    status = prediction["status"]
+    color = GREEN if status == "Placed" else RED
+    confidence = prediction["confidence"] * 100
+    placed_chance = prediction["prob_placed"] * 100
 
-                st.markdown("---")
-                rc = GREEN if result == "Placed" else RED
-                icon = "Congratulations!" if result == "Placed" else "Needs Improvement"
+    st.divider()
+    result_col, chart_col = st.columns([1, 1.15], gap="large")
 
-                # Result and charts side by side
-                cres, ccharts = st.columns([1, 1.3])
+    with result_col:
+        st.markdown(
+            f"""
+            <div class="result-banner" style="background:{color};">
+                <p style="letter-spacing:0.04em; font-size:0.85rem;">Placement status</p>
+                <h2>{status}</h2>
+                <p>Confidence in this result: <b>{confidence:.1f}%</b></p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("Chance of placement", f"{placed_chance:.1f}%")
+        metric_cols[1].metric("Chance of not placed", f"{100 - placed_chance:.1f}%")
+        st.progress(min(max(prediction["confidence"], 0.0), 1.0))
 
-                with cres:
-                    st.markdown(
-                        f"<div style='background:{rc}; padding:1.5rem; border-radius:12px; "
-                        f"text-align:center;'>"
-                        f"<h1 style='color:white; margin:0.2rem 0; font-size:2rem;'>{result}</h1>"
-                        f"<p style='color:rgba(255,255,255,0.9); font-size:1rem;'>"
-                        f"Confidence: <b>{confidence:.1f}%</b></p></div>",
-                        unsafe_allow_html=True
-                    )
-                    st.progress(int(confidence))
+        st.subheader("Suggestions")
+        if status == "Placed":
+            st.success("The profile is in the placed range. Keep building on it.")
+        else:
+            st.warning("The profile is in the not placed range. These changes would help.")
+        for tip in prediction["suggestions"]:
+            st.markdown(f"- {tip}")
 
-                    # Suggestions
-                    st.markdown("### Suggestions")
-                    if result == "Placed":
-                        suggestions = [
-                            "Continue improving technical skills",
-                            "Participate in more projects",
-                            "Keep practising interview preparation",
-                            "Consider internships for industry exposure",
-                            "Build network through hackathons and workshops"
-                        ]
-                        st.success("Keep growing with these tips:")
-                    else:
-                        suggestions = [
-                            "Improve technical skills",
-                            "Build more projects",
-                            "Complete an internship",
-                            "Improve communication skills",
-                            "Reduce backlogs",
-                            "Participate in hackathons"
-                        ]
-                        st.warning("Here's how to improve your chances:")
+        st.subheader("Download report")
+        pdf = build_report(profile, prediction, prediction["suggestions"])
+        safe_name = profile.get("student_name", "").strip() or "student"
+        safe_name = "".join(ch for ch in safe_name if ch.isalnum() or ch in (" ", "_", "-")).strip()
+        safe_name = safe_name.replace(" ", "_") or "student"
+        st.download_button(
+            "Download PDF report",
+            data=pdf,
+            file_name=f"Placement_Report_{safe_name}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
-                    for s in suggestions:
-                        st.markdown(f"- {s}")
+    with chart_col:
+        st.subheader("Placement probability")
+        st.caption("Placed compared with Not Placed for this student.")
+        fig1 = probability_chart(prediction["prob_placed"], prediction["prob_not_placed"])
+        st.pyplot(fig1, clear_figure=True)
+        plt.close(fig1)
 
-                    # PDF download
-                    st.markdown("### Download Report")
-                    display = {
-                        "CGPA": cgpa, "Major Projects": maj,
-                        "Workshops": ws, "Mini Projects": mini,
-                        "Skills": skills, "Communication": comm,
-                        "Internship": intern, "Hackathon": hack,
-                        "12th %": p12, "10th %": p10,
-                        "Backlogs": backlogs
-                    }
-                    try:
-                        pdf = generate_pdf(display, result, confidence, suggestions)
-                        st.download_button(
-                            "Download PDF Report", pdf,
-                            f"Placement_Report_{datetime.now():%Y%m%d_%H%M}.pdf",
-                            "application/pdf", use_container_width=True
-                        )
-                    except Exception as e:
-                        st.error(f"Could not generate PDF: {e}")
+        st.subheader("Student profile summary")
+        st.caption("CGPA, skills, communication, total projects, and backlogs.")
+        fig2 = profile_chart(profile)
+        st.pyplot(fig2, clear_figure=True)
+        plt.close(fig2)
 
-                with ccharts:
-                    # Chart 1: Probability bar
-                    st.markdown("#### Placement Probability")
-                    fig1, ax1 = plt.subplots(figsize=(4.5, 2.5))
-                    p = [1 - prob, prob]
-                    bars = ax1.barh(["Not Placed", "Placed"], p,
-                                    color=[RED, GREEN], height=0.4)
-                    for b, v in zip(bars, p):
-                        ax1.text(b.get_width() + 0.01, b.get_y() + b.get_height() / 2,
-                                 f"{v*100:.1f}%", va="center", fontsize=11, fontweight="bold")
-                    ax1.set_xlim(0, 1.3)
-                    ax1.grid(axis="x", alpha=0.3)
-                    sns.despine()
-                    st.pyplot(fig1)
-                    plt.close()
+        name = profile.get("student_name", "").strip()
+        who = f"{name}: " if name else ""
+        st.caption(
+            f"{who}CGPA {float(profile['cgpa']):.1f} · "
+            f"Skills {int(profile['skills'])} · "
+            f"Communication {float(profile['communication']):.1f} · "
+            f"Projects {int(profile['major']) + int(profile['mini'])} · "
+            f"Workshops {int(profile['workshops'])} · "
+            f"Internship {profile['internship']} · "
+            f"Hackathon {profile['hackathon']} · "
+            f"10th {int(profile['tenth'])}% · "
+            f"12th {int(profile['twelfth'])}% · "
+            f"Backlogs {int(profile['backlogs'])}"
+        )
 
-                    # Chart 2: Profile bar chart
-                    st.markdown("#### Student Profile")
-                    profile = {
-                        "CGPA": cgpa, "Skills": skills,
-                        "Comm.": comm, "Projects": maj + mini,
-                        "Backlogs": backlogs
-                    }
-                    fig2, ax2 = plt.subplots(figsize=(4.5, 2.5))
-                    colours = [NAVY, BLUE, GOLD, GREEN, RED]
-                    bars2 = ax2.bar(profile.keys(), profile.values(),
-                                    color=colours, width=0.55)
-                    for b, v in zip(bars2, profile.values()):
-                        ax2.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.05,
-                                 str(v), ha="center", fontsize=10, fontweight="bold")
-                    ax2.grid(axis="y", alpha=0.3)
-                    sns.despine()
-                    st.pyplot(fig2)
-                    plt.close()
 
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.code(traceback.format_exc())
+def main():
+    init_state()
+    try:
+        verify_network()
+    except Exception as error:
+        st.error(f"The prediction model could not be checked: {error}")
+        st.stop()
+
+    st.sidebar.markdown(
+        f"<h2 style='color:{NAVY}; text-align:center; margin-bottom:0;'>Placement Predictor</h2>"
+        f"<p style='text-align:center; color:{SLATE}; font-size:0.85rem;'>ANN · Streamlit</p>",
+        unsafe_allow_html=True,
+    )
+    st.sidebar.button("Home", use_container_width=True, on_click=go_to, args=("Home",))
+    st.sidebar.button(
+        "Prediction",
+        use_container_width=True,
+        on_click=go_to,
+        args=("Prediction",),
+    )
+    st.sidebar.divider()
+    st.sidebar.caption(
+        "Open Home for the project overview. Open Prediction to enter a student and download the report."
+    )
+
+    if st.session_state.nav == "Home":
+        render_home()
+    else:
+        render_prediction()
+
+
+main()

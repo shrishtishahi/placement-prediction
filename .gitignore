@@ -1,26 +1,6 @@
-# Python cache
+.venv/
 __pycache__/
 *.pyc
-*.pyo
-
-# Temp model files (generated at runtime)
-_temp_weights.h5
-_tmp_w.h5
-_placement_model.keras
-_*.h5
-
-# Streamlit config
-.streamlit/
-
-# Environment
+.vercel/
 .env
-venv/
-.venv/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+*.pdf

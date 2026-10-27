@@ -1,46 +1,25 @@
-# Student Placement Prediction System
+# Student Placement Prediction
 
-This project predicts whether a student will get placed in campus placements based on their academic and skill details. It uses an Artificial Neural Network (ANN) for prediction.
+Streamlit app that predicts whether a student will be placed.
 
-## How to Run
+## Run on any computer
 
-1. Install required libraries:
-```
-pip install -r requirements.txt
-```
+1. Install Python 3.11 or newer from https://www.python.org/downloads/
+   Tick **Add python.exe to PATH**.
+2. Extract this folder.
+3. On Windows, double-click **Run_Server.bat**.
+   On Mac or Linux, run `bash Run_Server.sh`.
+4. Leave that window open. The app opens in the browser.
+5. Close the window when you are finished.
 
-2. Run the app:
-```
-streamlit run app.py
-```
+The first launch needs internet to install the libraries. Later launches start straight away.
 
-3. Open http://localhost:8501 in your browser
+## Files
 
-## Files in this project
-
-- app.py - Streamlit web app (Home + Prediction pages)
-- Student_Placement_Prediction.ipynb - Jupyter notebook with step by step implementation
-- Placement_Prediction_data.csv - Dataset of 10,000 students
-- placement_ann_model.zip - Trained ANN model
-- scaler.pkl - StandardScaler for feature scaling
-- label_encoder.pkl - LabelEncoder for target variable
-- requirements.txt - List of libraries needed
-
-## Project Steps
-
-1. Data Collection - 10,000 student records
-2. Data Cleaning - removed IDs and duplicates
-3. EDA - analyzed patterns and correlations
-4. Data Preprocessing - encoding, scaling, train-test split
-5. Model Building - ANN with 2 hidden layers
-6. Model Evaluation - 93.67% accuracy
-7. Deployment - Streamlit web application
-
-## Model Architecture
-
-Input (11 features) → Dense(64, ReLU) → Dropout(30%) → Dense(32, ReLU) → Dropout(30%) → Output(1, Sigmoid)
-
-- Optimizer: Adam
-- Loss: Binary Crossentropy
-- Parameters: 2,881
-- Test Accuracy: 93.67%
+- `app.py` — Streamlit pages
+- `predictor.py` — trained neural network
+- `report_pdf.py` — PDF report
+- `ann_weights.npz` — saved model weights
+- `Placement_Prediction_data.csv` — dataset shown on the home page
+- `requirements.txt` — libraries
+- `Run_Server.bat` / `Run_Server.sh` — one-click start
